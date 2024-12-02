@@ -113,11 +113,13 @@ void kmeans(int n, int k, int max_iters, float* x, float* y, float* z, float* mu
         // Launch kernels
         dim3 blockSize(256);
         dim3 gridSize((n + blockSize.x - 1) / blockSize.x);
+        auto start = std::chrono::high_resolution_clock::now();
         get_dst<<<gridSize, blockSize>>>(dst_d, x_d, y_d, z_d, mu_x_d, mu_y_d, mu_z_d, n, k);
         regroup<<<gridSize, blockSize>>>(group_d, dst_d, n, k);
         clear<<<1, k>>>(sum_x_d, sum_y_d, sum_z_d, cluster_size_d, k);
         recenter_step1<<<gridSize, blockSize>>>(sum_x_d, sum_y_d, sum_z_d, cluster_size_d, x_d, y_d, z_d, group_d, n);
         recenter_step2<<<1, k>>>(mu_x_d, mu_y_d, mu_z_d, sum_x_d, sum_y_d, sum_z_d, cluster_size_d, k);
+        
     }
 
     // Copy results back to host
@@ -161,40 +163,53 @@ int main() {
     const int k = 10; // Number of clusters
     const int max_iters = MAX_ITERATIONS;
 
-    std::vector<Point3D> points;
-    if (!read_points("datapoints/points_1_000_000.txt", points)) {
-        return -1;
-    }
+    // Array of filenames to process
+    std::vector<std::string> filenames = {
+        "datapoints/points_100.txt",
+        "datapoints/points_500.txt",
+        "datapoints/points_1_000.txt",
+        "datapoints/points_10_000.txt",
+        "datapoints/points_50_000.txt",
+        "datapoints/points_100_000.txt",
+        "datapoints/points_250_000.txt",
+        "datapoints/points_1_000_000.txt"
+    };
+    // Loop over each file
+    for (const auto& filename : filenames) {
+        std::cout << "Processing file: " << filename << std::endl;
+        // Read points from the file
+        std::vector<Point3D> points;
+        if (!read_points(filename, points)) {
+            std::cerr << "Skipping file due to read error: " << filename << std::endl;
+            continue;
+        }
+        int n = points.size();
+        std::vector<float> x(n), y(n), z(n);
+        for (int i = 0; i < n; i++) {
+            x[i] = points[i].x;
+            y[i] = points[i].y;
+            z[i] = points[i].z;
+        }
+        std::vector<float> mu_x(k), mu_y(k), mu_z(k);
+        std::vector<int> group(n);
 
-    int n = points.size();
-    std::vector<float> x(n), y(n), z(n);
-    for (int i = 0; i < n; i++) {
-        x[i] = points[i].x;
-        y[i] = points[i].y;
-        z[i] = points[i].z;
-    }
+        // Initialize centroids (use the first k points as initial centroids)
+        for (int j = 0; j < k; j++) {
+            mu_x[j] = points[j].x;
+            mu_y[j] = points[j].y;
+            mu_z[j] = points[j].z;
+        }
 
-    std::vector<float> mu_x(k), mu_y(k), mu_z(k);
-    std::vector<int> group(n);
+        // Run K-Means and measure runtime
+        auto start = std::chrono::high_resolution_clock::now();
+        kmeans(n, k, max_iters, x.data(), y.data(), z.data(), mu_x.data(), mu_y.data(), mu_z.data(), group.data());
+        auto end = std::chrono::high_resolution_clock::now();
 
-    // Initialize centroids (use the first k points as initial centroids)
-    for (int j = 0; j < k; j++) {
-        mu_x[j] = points[j].x;
-        mu_y[j] = points[j].y;
-        mu_z[j] = points[j].z;
-    }
-
-    // Run K-Means
-    auto start = std::chrono::high_resolution_clock::now();
-    kmeans(n, k, max_iters, x.data(), y.data(), z.data(), mu_x.data(), mu_y.data(), mu_z.data(), group.data());
-    auto end = std::chrono::high_resolution_clock::now();
-
-    // Print results
-    std::chrono::duration<double> elapsed = end - start;
-    std::cout << "Time taken for KMeans: " << elapsed.count() << " seconds" << std::endl;
-    std::cout << "Final centroids:\n";
-    for (int j = 0; j < k; j++) {
-        std::cout << "Centroid " << j << ": (" << mu_x[j] << ", " << mu_y[j] << ", " << mu_z[j] << ")\n";
+        // Print results
+        std::chrono::duration<double> elapsed = end - start;
+        std::cout << "Time taken for K-Means on file " << filename << ": " 
+                  << elapsed.count() << " seconds" << std::endl;
+        std::cout << "-------------------------------------------\n";
     }
 
     return 0;
